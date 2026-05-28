@@ -6,14 +6,12 @@ import json
 import os
 
 # 1. Page Configuration
-st.set_page_config(page_title="SQL Sales Dashboard", layout="wide")
-st.title("🛢️ Custom Sales BI Engine with Persistent Storage")
+st.set_page_config(page_title="Advanced Sales BI", layout="wide")
+st.title("🎛️ Enterprise Sales BI Engine (100% Free)")
 
-# 2. File Paths for Free Local Storage
 QUERIES_FILE = "saved_queries.json"
 DASHBOARD_FILE = "saved_dashboard.json"
 
-# Helper functions to read/write data for free
 def load_storage(filepath, default_type=dict):
     if os.path.exists(filepath):
         with open(filepath, "r") as f:
@@ -24,183 +22,214 @@ def save_storage(filepath, data):
     with open(filepath, "w") as f:
         json.dump(data, f, indent=4)
 
-# Initialize Session State tracking
 if 'saved_queries' not in st.session_state:
     st.session_state['saved_queries'] = load_storage(QUERIES_FILE, dict)
 if 'pinned_charts' not in st.session_state:
     st.session_state['pinned_charts'] = load_storage(DASHBOARD_FILE, list)
 
-# 3. Multi-File Ingestion Layer (Excel)
-st.sidebar.header("📥 Ingest Sales Data")
-uploaded_files = st.sidebar.file_uploader(
-    "Select your cleaned Excel files", 
-    type=["xlsx", "xls"], 
-    accept_multiple_files=True
-)
+# 2. Excel Data Ingestion
+st.sidebar.header("📥 Data Ingestion")
+uploaded_files = st.sidebar.file_uploader("Select clean Excel sheets", type=["xlsx", "xls"], accept_multiple_files=True)
 
 registered_tables = []
-
 if uploaded_files:
-    st.sidebar.markdown("### 📋 Active Database Schema")
+    st.sidebar.markdown("### 📋 Database Tables")
     for file in uploaded_files:
         table_name = file.name.split('.')[0].lower().replace(" ", "_").replace("-", "_")
         try:
             df_excel = pd.read_excel(file)
             duckdb.register(table_name, df_excel)
             registered_tables.append(table_name)
-            
             with st.sidebar.expander(f"Table: {table_name}"):
-                st.code(f"Columns:\n" + "\n".join([f"- {col}" for col in df_excel.columns]))
+                st.code("\n".join([f"- {col}" for col in df_excel.columns]))
         except Exception as e:
-            st.sidebar.error(f"Failed to read {file.name}: {e}")
+            st.sidebar.error(f"Error loading {file.name}: {e}")
 
-    # Create UI Tabs (Added a 3rd Tab for the Dashboard layout)
-    tab1, tab2, tab3 = st.tabs(["🚀 SQL Workspace", "📊 Chart Studio", "📋 Pinned Dashboard"])
+    tab1, tab2, tab3 = st.tabs(["🚀 SQL Workspace", "📊 Chart Studio (Multi-Slice)", "📋 Interactive Dashboard"])
 
     # ==========================================
-    # TAB 1: INTERACTIVE SQL WORKSPACE & SAVED QUERIES
+    # TAB 1: SQL WORKSPACE
     # ==========================================
     with tab1:
-        st.subheader("🧮 SQL Query Builder & History Library")
+        st.subheader("🧮 SQL Query Command Center")
+        saved_options = ["-- Select a Saved Query --"] + list(st.session_state['saved_queries'].keys())
+        selected_saved = st.selectbox("📂 Load Saved Query:", options=saved_options)
         
-        # Feature 1: Load a saved query from the dropdown library
-        saved_query_options = ["-- Select a Saved Query --"] + list(st.session_state['saved_queries'].keys())
-        selected_saved = st.selectbox("📂 Load from Query Library:", options=saved_query_options)
-        
-        # Set default text area content based on selection
-        if selected_saved != "-- Select a Saved Query --":
-            starting_sql = st.session_state['saved_queries'][selected_saved]
-        else:
-            starting_sql = f"SELECT * FROM {registered_tables[0]} LIMIT 5" if registered_tables else ""
+        starting_sql = st.session_state['saved_queries'][selected_saved] if selected_saved != "-- Select a Saved Query --" else f"SELECT * FROM {registered_tables[0]} LIMIT 100" if registered_tables else ""
+        sql_input = st.text_area("📝 SQL Script Window:", value=starting_sql, height=150)
 
-        sql_input = st.text_area("📝 Edit Your SQL Query:", value=starting_sql, height=150)
-
-        col_btn1, col_btn2 = st.columns([1, 4])
-        with col_btn1:
-            run_query = st.button("⚡ Run SQL Query")
-        
-        # Feature 1: Save the current query input text
-        with col_btn2:
-            with st.popover("💾 Save This Query"):
-                new_query_name = st.text_input("Give your query a unique name:")
-                if st.button("Confirm Save"):
-                    if new_query_name.strip() and sql_input.strip():
-                        st.session_state['saved_queries'][new_query_name] = sql_input
+        col_b1, col_b2 = st.columns([1, 4])
+        with col_b1:
+            run_query = st.button("⚡ Run SQL Script")
+        with col_b2:
+            with st.popover("💾 Save Query Definition"):
+                q_name = st.text_input("Query Nickname:")
+                if st.button("Save to Storage"):
+                    if q_name.strip() and sql_input.strip():
+                        st.session_state['saved_queries'][q_name] = sql_input
                         save_storage(QUERIES_FILE, st.session_state['saved_queries'])
-                        st.success(f"Saved '{new_query_name}' to library!")
+                        st.success(f"Saved '{q_name}'!")
                         st.rerun()
 
-        # Handle Query Execution Logic
         if run_query or (selected_saved != "-- Select a Saved Query --" and 'last_query_result' not in st.session_state):
             if sql_input.strip():
                 try:
-                    query_result = duckdb.sql(sql_input).df()
-                    st.session_state['last_query_result'] = query_result
-                    st.session_state['current_sql_text'] = sql_input # Cache sql string for chart building
-                    st.success("Query executed successfully!")
-                    
-                    if len(query_result) == 1 and len(query_result.columns) <= 3:
-                        st.markdown("#### 🎯 Resulting Metric Output")
-                        m_cols = st.columns(len(query_result.columns))
-                        for i, col_name in enumerate(query_result.columns):
-                            m_cols[i].metric(label=col_name.replace("_", " ").title(), value=f"{query_result.iloc[0, i]}")
-                    
-                    st.markdown("#### 📋 Data Output Preview")
-                    st.dataframe(query_result, use_container_width=True)
-                except Exception as query_error:
-                    st.error(f"SQL Syntax Error: {query_error}")
+                    res_df = duckdb.sql(sql_input).df()
+                    st.session_state['last_query_result'] = res_df
+                    st.session_state['current_sql_text'] = sql_input
+                    st.success("Query successful!")
+                    st.dataframe(res_df.head(50), use_container_width=True)
+                except Exception as err:
+                    st.error(f"SQL Error: {err}")
 
     # ==========================================
-    # TAB 2: VISUAL CHART STUDIO & PINNING ENGINE
+    # TAB 2: CHART STUDIO (MULTI-DIMENSIONAL SLICING)
     # ==========================================
     with tab2:
-        st.subheader("📊 Chart Generator Studio")
+        st.subheader("📊 Multi-Dimensional Chart Studio")
         
         if 'last_query_result' in st.session_state and not st.session_state['last_query_result'].empty:
             working_df = st.session_state['last_query_result']
             all_cols = working_df.columns.tolist()
             
-            col_v1, col_v2, col_v3 = st.columns(3)
-            with col_v1:
-                chart_type = st.selectbox("Chart Style", ["Bar Chart", "Line Chart", "Scatter Plot"])
-            with col_v2:
-                x_axis = st.selectbox("X-Axis (Dimensions)", options=all_cols)
-            with col_v3:
-                y_axis = st.selectbox("Y-Axis (Metrics/Values)", options=all_cols)
+            # Form UI layout for building deeper cuts of data
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                chart_type = st.selectbox("Visual Framework", ["Stacked Bar", "Grouped Bar", "Line Trend", "Treemap (Hierarchical)", "Scatter Plot"])
+            with c2:
+                x_axis = st.selectbox("Primary Axis (X-Axis / Category)", options=all_cols)
+            with c3:
+                y_axis = st.selectbox("Numeric Value (Y-Axis / Metric)", options=all_cols)
+            with c4:
+                # The Secret Sauce for Multi-Slicing: Legend segmentation
+                group_by = st.selectbox("Secondary Slice / Legend (Optional)", options=["None"] + all_cols)
+            
+            color_param = None if group_by == "None" else group_by
 
-            # Build the visual object
-            if chart_type == "Bar Chart":
-                fig = px.bar(working_df, x=x_axis, y=y_axis, title=f"{y_axis} by {x_axis}", template="plotly_white")
-            elif chart_type == "Line Chart":
-                fig = px.line(working_df, x=x_axis, y=y_axis, title=f"{y_axis} Trend Over {x_axis}", template="plotly_white")
+            # Render Logic based on deep configurations
+            if chart_type == "Stacked Bar":
+                fig = px.bar(working_df, x=x_axis, y=y_axis, color=color_param, barmode="stack", template="plotly_white")
+            elif chart_type == "Grouped Bar":
+                fig = px.bar(working_df, x=x_axis, y=y_axis, color=color_param, barmode="group", template="plotly_white")
+            elif chart_type == "Line Trend":
+                fig = px.line(working_df, x=x_axis, y=y_axis, color=color_param, markers=True, template="plotly_white")
             elif chart_type == "Scatter Plot":
-                fig = px.scatter(working_df, x=x_axis, y=y_axis, title=f"Correlation: {x_axis} vs {y_axis}", template="plotly_white")
+                fig = px.scatter(working_df, x=x_axis, y=y_axis, color=color_param, size=y_axis if y_axis else None, template="plotly_white")
+            elif chart_type == "Treemap (Hierarchical)":
+                path_list = [x_axis] if group_by == "None" else [group_by, x_axis]
+                fig = px.treemap(working_df, path=path_list, values=y_axis, template="plotly_white")
                 
             st.plotly_chart(fig, use_container_width=True)
 
-            # Feature 2: Pin this specific layout configuration to the Dashboard panel
             st.markdown("---")
-            st.markdown("#### 📌 Pin This Visual Setup to Dashboard")
-            dashboard_title = st.text_input("Enter a Dashboard Title for this chart:", value=f"My Custom {chart_type}")
-            
-            if st.button("🚀 Add to Pinned Dashboard"):
-                new_chart_config = {
-                    "title": dashboard_title,
+            dash_title = st.text_input("Name this visual component:", value=f"{y_axis} by {x_axis}")
+            if st.button("📌 Pin Component to Dashboard Layout"):
+                chart_config = {
+                    "title": dash_title,
                     "sql": st.session_state['current_sql_text'],
                     "chart_type": chart_type,
                     "x_axis": x_axis,
-                    "y_axis": y_axis
+                    "y_axis": y_axis,
+                    "group_by": group_by
                 }
-                st.session_state['pinned_charts'].append(new_chart_config)
+                st.session_state['pinned_charts'].append(chart_config)
                 save_storage(DASHBOARD_FILE, st.session_state['pinned_charts'])
-                st.success(f"Added '{dashboard_title}' to your layout overview tab!")
+                st.success(f"Added '{dash_title}' to layout!")
         else:
-            st.info("💡 Run a successful SQL query in the 'SQL Workspace' tab first to generate charts.")
+            st.info("💡 Run an active SQL script in Tab 1 to unlock advanced visualization setups.")
 
     # ==========================================
-    # TAB 3: THE LIVE RETENTION DASHBOARD LAYOUT
+    # TAB 3: THE INTERACTIVE DASHBOARD WITH FILTERS
     # ==========================================
     with tab3:
-        st.subheader("📋 Your Persistent Custom Dashboard Grid")
-        st.markdown("This section automatically recalculates your charts using their saved SQL rules against your currently uploaded files.")
+        st.subheader("📋 Your Live Interactive Dashboard Grid")
         
         if st.session_state['pinned_charts']:
-            # Render a responsive 2-column dashboard layout
+            # --- GLOBAL FILTER ENGINE ENGINE ---
+            st.markdown("#### 🔍 Interactive Global Dashboard Filters")
+            
+            # Combine all unique columns from all pinned charts to find what we can filter by
+            mappable_filter_cols = set()
+            for c_meta in st.session_state['pinned_charts']:
+                try:
+                    # Quick test execution to see data columns available
+                    temp_df = duckdb.sql(c_meta['sql']).df()
+                    # Only suggest object/text columns for segment filtering
+                    for col in temp_df.select_dtypes(include=['object', 'category']).columns:
+                        mappable_filter_cols.add(col)
+                except:
+                    pass
+            
+            filter_cols_list = list(mappable_filter_cols)
+            
+            # If we find valid filtering dimensions, present them at the top of the screen
+            selected_filter_col = st.selectbox("🎯 Choose Column to Filter Globally:", options=["No Global Filter Active"] + filter_cols_list)
+            
+            active_filter_values = []
+            if selected_filter_col != "No Global Filter Active":
+                # Gather all unique values for that specific column across all tables
+                all_possible_vals = set()
+                for c_meta in st.session_state['pinned_charts']:
+                    try:
+                        temp_df = duckdb.sql(c_meta['sql']).df()
+                        if selected_filter_col in temp_df.columns:
+                            all_possible_vals.update(temp_df[selected_filter_col].dropna().unique().tolist())
+                    except:
+                        pass
+                
+                active_filter_values = st.multiselect(f"Match Specific {selected_filter_col} Values:", options=list(all_possible_vals), default=list(all_possible_vals))
+            
+            st.markdown("---")
+
+            # --- RENDER DASHBOARD LAYOUT GRID ---
             col_dash1, col_dash2 = st.columns(2)
             
-            for index, chart_meta in enumerate(st.session_state['pinned_charts']):
-                # Alternate distribution between left and right column boxes
-                target_column = col_dash1 if index % 2 == 0 else col_dash2
+            for idx, chart_meta in enumerate(st.session_state['pinned_charts']):
+                target_col = col_dash1 if idx % 2 == 0 else col_dash2
                 
-                with target_column:
+                with target_col:
                     with st.container(border=True):
                         st.markdown(f"### {chart_meta['title']}")
                         
                         try:
-                            # Re-run the underlying SQL query live against current engine data streams
+                            # 1. Fetch data stream
                             dash_df = duckdb.sql(chart_meta['sql']).df()
                             
-                            # Rebuild the plot based on saved layout parameters
-                            if chart_meta['chart_type'] == "Bar Chart":
-                                d_fig = px.bar(dash_df, x=chart_meta['x_axis'], y=chart_meta['y_axis'], template="plotly_white")
-                            elif chart_meta['chart_type'] == "Line Chart":
-                                d_fig = px.line(dash_df, x=chart_meta['x_axis'], y=chart_meta['y_axis'], template="plotly_white")
-                            elif chart_meta['chart_type'] == "Scatter Plot":
-                                d_fig = px.scatter(dash_df, x=chart_meta['x_axis'], y=chart_meta['y_axis'], template="plotly_white")
+                            # 2. Inject runtime filter modifications if match is found
+                            if selected_filter_col != "No Global Filter Active" and selected_filter_col in dash_df.columns:
+                                if active_filter_values:
+                                    dash_df = dash_df[dash_df[selected_filter_col].isin(active_filter_values)]
+                                else:
+                                    dash_df = dash_df.iloc[0:0] # Return empty state if values unchecked
                             
-                            st.plotly_chart(d_fig, use_container_width=True, key=f"dash_chart_{index}")
+                            # 3. Handle multi-dimensional parameter mapping
+                            g_param = chart_meta.get('group_by', 'None')
+                            c_color = None if g_param == "None" else g_param
+                            c_type = chart_meta['chart_type']
                             
-                        except Exception as dash_render_err:
-                            st.error(f"Could not compute chart data. Make sure matching sheets are uploaded. Error: {dash_render_err}")
+                            # 4. Generate respective plot structures
+                            if c_type == "Stacked Bar":
+                                d_fig = px.bar(dash_df, x=chart_meta['x_axis'], y=chart_meta['y_axis'], color=c_color, barmode="stack", template="plotly_white")
+                            elif c_type == "Grouped Bar":
+                                d_fig = px.bar(dash_df, x=chart_meta['x_axis'], y=chart_meta['y_axis'], color=c_color, barmode="group", template="plotly_white")
+                            elif c_type == "Line Trend":
+                                d_fig = px.line(dash_df, x=chart_meta['x_axis'], y=chart_meta['y_axis'], color=c_color, markers=True, template="plotly_white")
+                            elif c_type == "Scatter Plot":
+                                d_fig = px.scatter(dash_df, x=chart_meta['x_axis'], y=chart_meta['y_axis'], color=c_color, template="plotly_white")
+                            elif c_type == "Treemap (Hierarchical)":
+                                p_list = [chart_meta['x_axis']] if g_param == "None" else [g_param, chart_meta['x_axis']]
+                                d_fig = px.treemap(dash_df, path=p_list, values=chart_meta['y_axis'], template="plotly_white")
+                            
+                            st.plotly_chart(d_fig, use_container_width=True, key=f"dash_chart_{idx}")
+                            
+                        except Exception as render_err:
+                            st.error(f"Execution Error: {render_err}")
                         
-                        # Feature 2: Selectively delete charts when required
-                        if st.button("❌ Remove from Layout", key=f"del_{index}"):
-                            st.session_state['pinned_charts'].pop(index)
+                        if st.button("❌ Remove Component", key=f"del_{idx}"):
+                            st.session_state['pinned_charts'].pop(idx)
                             save_storage(DASHBOARD_FILE, st.session_state['pinned_charts'])
-                            st.toast(f"Removed element.")
                             st.rerun()
         else:
-            st.info("💡 No charts pinned yet. Customize a visualization in the 'Chart Studio' and click 'Add to Pinned Dashboard'.")
-
+            st.info("💡 Dashboard is empty. Set up and pin your custom slices inside 'Chart Studio'.")
 else:
-    st.info("💡 Ingest your files in the side navigation panel to get started.")
+    st.info("💡 Ingest data files in the sidebar to start analytics.")
