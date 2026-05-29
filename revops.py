@@ -276,4 +276,8 @@ if registered_tables:
         else:
             st.info("💡 Shared dashboard layout is empty.")
 else:
+<<<<<<< HEAD
     st.info("💡 Add default data sheets into your local server `/preloaded` folder or use the sidepanel to upload Excel files manually.")
+=======
+    st.info("💡 Add default data sheets into your local server `/preloaded` folder or use the sidepanel to upload Excel files manually.")
+>>>>>>> 7245f4d (App Update)
